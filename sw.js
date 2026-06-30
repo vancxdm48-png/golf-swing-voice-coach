@@ -1,11 +1,13 @@
-const CACHE_NAME = "golf-swing-voice-coach-v2";
+const CACHE_NAME = "golf-swing-voice-coach-v3";
 const LOCAL_ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
   "./manifest.webmanifest",
-  "./icon.svg",
+  "./icon.png",
+  "./icon-192.png",
+  "./icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
