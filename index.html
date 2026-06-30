@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Golf Swing Voice Coach</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%23146b49'/%3E%3Cpath d='M20 42c10-16 20-20 31-19' stroke='white' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3Ccircle cx='18' cy='46' r='4' fill='white'/%3E%3C/svg%3E" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta name="theme-color" content="#146b49" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workbench" aria-label="ゴルフスイング診断">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Golf Swing Voice Coach</p>
+            <h1>撮って、聞いて、次の1球を決める</h1>
+          </div>
+          <div class="status-stack">
+            <div class="status-pill" id="cameraStatus">カメラ未接続</div>
+            <div class="mode-pill" id="diagnosisMode">手動ガイドのみ</div>
+          </div>
+        </header>
+
+        <div class="stage-grid">
+          <section class="camera-panel" aria-label="撮影画面">
+            <div class="video-shell">
+              <video id="cameraFeed" class="media-view active" autoplay muted playsinline></video>
+              <video id="playback" class="media-view" controls playsinline></video>
+              <canvas id="overlayCanvas" class="overlay"></canvas>
+              <canvas id="analysisCanvas" class="analysis-canvas"></canvas>
+              <div class="countdown" id="countdown" aria-live="polite"></div>
+            </div>
+
+            <div class="transport">
+              <button class="primary" id="startCameraBtn" type="button">カメラ開始</button>
+              <button id="recordBtn" type="button" disabled>録画</button>
+              <button id="stopBtn" type="button" disabled>停止</button>
+              <label class="file-button" for="uploadVideo">動画読込</label>
+              <input id="uploadVideo" type="file" accept="video/*" />
+              <button id="diagnoseBtn" type="button" disabled>診断</button>
+              <button id="speakBtn" type="button" disabled>音声再生</button>
+              <button id="stopSpeakBtn" type="button" disabled>音声停止</button>
+              <button id="retakeBtn" type="button" disabled>再撮影</button>
+            </div>
+
+            <div class="playback-tools" aria-label="再生補助">
+              <button id="slowBtn" type="button" disabled>0.5x</button>
+              <button id="normalBtn" type="button" disabled>1x</button>
+              <button id="backFrameBtn" type="button" disabled>1コマ戻る</button>
+              <button id="nextFrameBtn" type="button" disabled>1コマ送る</button>
+            </div>
+          </section>
+
+          <aside class="control-panel" aria-label="診断設定">
+            <div class="panel-section">
+              <h2>撮影条件</h2>
+              <div class="segmented" role="radiogroup" aria-label="撮影方向">
+                <label>
+                  <input type="radio" name="viewMode" value="face" checked />
+                  <span>正面</span>
+                </label>
+                <label>
+                  <input type="radio" name="viewMode" value="downline" />
+                  <span>後方</span>
+                </label>
+              </div>
+
+              <div class="field-row">
+                <label for="clubSelect">クラブ</label>
+                <select id="clubSelect">
+                  <option value="driver">ドライバー</option>
+                  <option value="fairway">フェアウェイウッド</option>
+                  <option value="iron" selected>アイアン</option>
+                  <option value="wedge">ウェッジ</option>
+                </select>
+              </div>
+
+              <div class="field-row">
+                <label for="levelSelect">目標</label>
+                <select id="levelSelect">
+                  <option value="stable" selected>安定して当てたい</option>
+                  <option value="distance">飛距離を伸ばしたい</option>
+                  <option value="slice">スライスを減らしたい</option>
+                  <option value="hook">左へのミスを減らしたい</option>
+                </select>
+              </div>
+
+              <div class="field-row">
+                <label for="cameraSelect">カメラ</label>
+                <select id="cameraSelect">
+                  <option value="environment" selected>背面カメラ</option>
+                  <option value="user">前面カメラ</option>
+                </select>
+              </div>
+
+              <div class="field-row">
+                <label for="durationSelect">録画</label>
+                <select id="durationSelect">
+                  <option value="0" selected>手動停止</option>
+                  <option value="4">4秒で自動停止</option>
+                  <option value="6">6秒で自動停止</option>
+                  <option value="8">8秒で自動停止</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="panel-section">
+              <h2>ガイド表示</h2>
+              <label class="checkline">
+                <input class="guide-toggle" type="checkbox" value="head" checked />
+                <span>頭の位置</span>
+              </label>
+              <label class="checkline">
+                <input class="guide-toggle" type="checkbox" value="spine" checked />
+                <span>中心軸・前傾ライン</span>
+              </label>
+              <label class="checkline">
+                <input class="guide-toggle" type="checkbox" value="shoulderHip" checked />
+                <span>肩と腰のライン</span>
+              </label>
+              <label class="checkline">
+                <input class="guide-toggle" type="checkbox" value="ball" checked />
+                <span>ボール位置</span>
+              </label>
+            </div>
+
+            <div class="panel-section">
+              <h2>補助チェック</h2>
+              <label class="checkline">
+                <input class="issue-check" type="checkbox" value="earlyExtend" />
+                <span>インパクトで体が起きやすい</span>
+              </label>
+              <label class="checkline">
+                <input class="issue-check" type="checkbox" value="sway" />
+                <span>バックスイングで横に流れやすい</span>
+              </label>
+              <label class="checkline">
+                <input class="issue-check" type="checkbox" value="fastTempo" />
+                <span>切り返しが速くなりやすい</span>
+              </label>
+              <label class="checkline">
+                <input class="issue-check" type="checkbox" value="handFloat" />
+                <span>インパクトで手元が浮きやすい</span>
+              </label>
+            </div>
+
+            <div class="panel-section meter-section">
+              <h2>解析メーター</h2>
+              <div class="meter-row">
+                <span>安定度</span>
+                <meter id="stabilityMeter" min="0" max="100" value="0"></meter>
+                <strong id="stabilityValue">--</strong>
+              </div>
+              <div class="meter-row">
+                <span>左右ブレ</span>
+                <meter id="swayMeter" min="0" max="100" value="0"></meter>
+                <strong id="swayValue">--</strong>
+              </div>
+              <div class="meter-row">
+                <span>テンポ</span>
+                <meter id="tempoMeter" min="0" max="100" value="0"></meter>
+                <strong id="tempoValue">--</strong>
+              </div>
+              <div class="meter-row">
+                <span>信頼度</span>
+                <meter id="confidenceMeter" min="0" max="100" value="0"></meter>
+                <strong id="confidenceValue">--</strong>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="result-band" aria-label="診断結果">
+        <div class="score-block">
+          <span class="score-label">診断スコア</span>
+          <strong id="scoreValue">--</strong>
+          <span id="scoreNote">録画後に診断できます</span>
+        </div>
+        <div class="advice-block">
+          <h2>音声アドバイス</h2>
+          <p id="adviceText">カメラを開始するか、動画を読み込んでください。診断後に画面表示と音声で改善ポイントを案内します。</p>
+        </div>
+        <div class="tips-block">
+          <h2>撮影のコツ</h2>
+          <ul>
+            <li>スマホは腰から胸の高さで固定</li>
+            <li>全身とクラブが画面に入る距離</li>
+            <li>逆光を避け、背景はできるだけシンプルに</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="detail-grid" aria-label="診断根拠">
+        <article class="detail-panel">
+          <h2>診断根拠</h2>
+          <ul class="evidence-list" id="evidenceList">
+            <li>診断後にスコアの理由を表示します</li>
+          </ul>
+        </article>
+        <article class="detail-panel">
+          <h2>撮影品質</h2>
+          <div class="quality-grid" id="qualityGrid">
+            <span>全身検出: --</span>
+            <span>解析方式: --</span>
+            <span>動画長さ: --</span>
+            <span>比較条件: --</span>
+          </div>
+        </article>
+        <article class="detail-panel">
+          <h2>レポート</h2>
+          <div class="report-actions">
+            <button id="exportReportBtn" type="button" disabled>JSON保存</button>
+            <button id="copyReportBtn" type="button" disabled>文章コピー</button>
+            <button id="installBtn" type="button" hidden>ホーム画面に追加</button>
+          </div>
+        </article>
+      </section>
+
+      <section class="loop-grid" aria-label="学習ループ">
+        <article class="loop-panel">
+          <h2>AIエージェント進行</h2>
+          <div class="agent-list">
+            <div class="agent-card" id="captureAgent">
+              <strong>撮影チェック</strong>
+              <span>待機中</span>
+            </div>
+            <div class="agent-card" id="motionAgent">
+              <strong>動き分析</strong>
+              <span>待機中</span>
+            </div>
+            <div class="agent-card" id="coachAgent">
+              <strong>コーチ助言</strong>
+              <span>待機中</span>
+            </div>
+            <div class="agent-card" id="practiceAgent">
+              <strong>次回課題</strong>
+              <span>待機中</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="loop-panel">
+          <h2>次の練習ループ</h2>
+          <ol class="practice-list" id="practicePlan">
+            <li>1スイング撮影する</li>
+            <li>診断を押して音声アドバイスを聞く</li>
+            <li>一番大きい課題を1つだけ直して再撮影する</li>
+          </ol>
+        </article>
+
+        <article class="loop-panel">
+          <h2>前回との比較</h2>
+          <div id="historyList" class="history-list">まだ履歴がありません</div>
+          <button id="clearHistoryBtn" type="button">履歴を消す</button>
+        </article>
+      </section>
+
+      <section class="notice-band" aria-label="注意事項">
+        <p>この診断は練習用の目安であり、医療・専門コーチングの診断ではありません。撮影時は周囲の安全を確認し、クラブを振れる十分なスペースを確保してください。</p>
+        <p>映像はこのブラウザ内で処理します。この試作品は動画を外部へ送信・保存しません。顔や個人情報が映る場合は、共有前に内容を確認してください。</p>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

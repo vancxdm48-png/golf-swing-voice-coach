@@ -1,0 +1,19 @@
+{
+  "name": "Golf Swing Voice Coach",
+  "short_name": "Swing Coach",
+  "description": "カメラでゴルフスイングを撮影し、AI姿勢推定と音声で改善ポイントを確認する練習アプリです。",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#edf4ef",
+  "theme_color": "#146b49",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
