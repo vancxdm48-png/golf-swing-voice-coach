@@ -60,9 +60,14 @@ button:disabled {
 }
 
 button.primary {
-  border-color: var(--accent);
-  background: var(--accent);
+  border-color: #c92828;
+  background: #d92d20;
   color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  border-color: #a91f1f;
+  background: #c32118;
 }
 
 .app-shell {
