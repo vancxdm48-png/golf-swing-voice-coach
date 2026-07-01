@@ -320,6 +320,10 @@ h2 {
   margin-bottom: 14px;
 }
 
+.segmented.compact {
+  margin-bottom: 0;
+}
+
 .segmented label {
   position: relative;
 }
@@ -354,7 +358,8 @@ h2 {
   margin-top: 10px;
 }
 
-.field-row label {
+.field-row label,
+.field-label {
   color: var(--muted);
   font-size: 0.9rem;
 }

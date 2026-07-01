@@ -115,6 +115,10 @@ function getViewMode() {
   return document.querySelector("input[name='viewMode']:checked").value;
 }
 
+function getBallSide() {
+  return document.querySelector("input[name='ballSide']:checked")?.value || "left";
+}
+
 function selectedIssues() {
   return [...document.querySelectorAll(".issue-check:checked")].map(
     (input) => input.value,
@@ -324,6 +328,8 @@ function startOverlayLoop() {
 function drawGuides(ctx, width, height) {
   const guides = enabledGuides();
   const viewMode = getViewMode();
+  const ballSide = getBallSide();
+  const ballDirection = ballSide === "right" ? 1 : -1;
   const centerX = width * 0.5;
   const headY = height * 0.21;
   const shoulderY = height * 0.37;
@@ -343,7 +349,7 @@ function drawGuides(ctx, width, height) {
     ctx.lineTo(width * 0.92, ballY);
     ctx.stroke();
     ctx.setLineDash([]);
-    drawLabel(ctx, "ボール", width * 0.08, ballY - height * 0.06);
+    drawLabel(ctx, "ボール", ballSide === "right" ? width * 0.78 : width * 0.08, ballY - height * 0.06);
   }
 
   if (guides.has("head")) {
@@ -359,31 +365,61 @@ function drawGuides(ctx, width, height) {
 
   if (guides.has("spine")) {
     ctx.strokeStyle = "rgba(255, 208, 92, 0.9)";
+    const spineStart =
+      viewMode === "face"
+        ? { x: centerX, y: headY + height * 0.03 }
+        : { x: centerX + ballDirection * width * 0.11, y: headY + height * 0.04 };
+    const spineEnd =
+      viewMode === "face"
+        ? { x: centerX, y: hipY }
+        : { x: centerX - ballDirection * width * 0.04, y: hipY };
     ctx.beginPath();
-    if (viewMode === "face") {
-      ctx.moveTo(centerX, headY + height * 0.03);
-      ctx.lineTo(centerX, hipY);
-    } else {
-      ctx.moveTo(centerX - width * 0.11, headY + height * 0.04);
-      ctx.lineTo(centerX + width * 0.04, hipY);
-    }
+    ctx.moveTo(spineStart.x, spineStart.y);
+    ctx.lineTo(spineEnd.x, spineEnd.y);
     ctx.stroke();
-    drawLabel(ctx, viewMode === "face" ? "中心軸" : "前傾", centerX + width * 0.035, hipY - height * 0.05);
+    const spineLabel = viewMode === "face" ? "中心軸" : `前傾 ${lineAngleFromVertical(spineStart, spineEnd)}°`;
+    drawLabel(ctx, spineLabel, spineEnd.x + ballDirection * width * 0.025, hipY - height * 0.05);
   }
 
   if (guides.has("shoulderHip")) {
     ctx.strokeStyle = "rgba(107, 190, 255, 0.86)";
+    const shoulderTilt = viewMode === "face" ? 0 : height * 0.04;
+    const hipTilt = viewMode === "face" ? 0 : height * 0.03;
+    const shoulderStart = {
+      x: centerX - width * 0.18,
+      y: shoulderY + (ballSide === "right" ? shoulderTilt : 0),
+    };
+    const shoulderEnd = {
+      x: centerX + width * 0.18,
+      y: shoulderY + (ballSide === "left" ? shoulderTilt : 0),
+    };
+    const hipStart = {
+      x: centerX - width * 0.15,
+      y: hipY + (ballSide === "right" ? hipTilt : 0),
+    };
+    const hipEnd = {
+      x: centerX + width * 0.15,
+      y: hipY + (ballSide === "left" ? hipTilt : 0),
+    };
     ctx.beginPath();
-    ctx.moveTo(centerX - width * 0.18, shoulderY);
-    ctx.lineTo(centerX + width * 0.18, shoulderY + (viewMode === "face" ? 0 : height * 0.04));
-    ctx.moveTo(centerX - width * 0.15, hipY);
-    ctx.lineTo(centerX + width * 0.15, hipY + (viewMode === "face" ? 0 : height * 0.03));
+    ctx.moveTo(shoulderStart.x, shoulderStart.y);
+    ctx.lineTo(shoulderEnd.x, shoulderEnd.y);
+    ctx.moveTo(hipStart.x, hipStart.y);
+    ctx.lineTo(hipEnd.x, hipEnd.y);
     ctx.stroke();
-    drawLabel(ctx, "肩", centerX + width * 0.19, shoulderY + height * 0.02);
-    drawLabel(ctx, "腰", centerX + width * 0.16, hipY + height * 0.035);
+    drawLabel(ctx, `肩 ${lineAngleFromHorizontal(shoulderStart, shoulderEnd)}°`, centerX + width * 0.19, shoulderY + height * 0.02);
+    drawLabel(ctx, `腰 ${lineAngleFromHorizontal(hipStart, hipEnd)}°`, centerX + width * 0.16, hipY + height * 0.035);
   }
 
   ctx.restore();
+}
+
+function lineAngleFromHorizontal(start, end) {
+  return Math.round(Math.abs((Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI));
+}
+
+function lineAngleFromVertical(start, end) {
+  return Math.round(Math.abs((Math.atan2(end.x - start.x, end.y - start.y) * 180) / Math.PI));
 }
 
 function drawLabel(ctx, text, x, y) {
@@ -1198,7 +1234,7 @@ installBtn.addEventListener("click", async () => {
   state.deferredInstallPrompt = null;
   installBtn.hidden = true;
 });
-document.querySelectorAll("input[name='viewMode'], .guide-toggle").forEach((input) => {
+document.querySelectorAll("input[name='viewMode'], input[name='ballSide'], .guide-toggle").forEach((input) => {
   input.addEventListener("change", startOverlayLoop);
 });
 
