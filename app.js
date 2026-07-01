@@ -848,7 +848,6 @@ function motionAgent(metrics) {
 }
 
 function coachAgent(motion, issues) {
-  const club = document.querySelector("#clubSelect").value;
   const goal = document.querySelector("#levelSelect").value;
   const viewMode = getViewMode();
   const manualPenalty = issues.length * 7;
@@ -908,13 +907,6 @@ function coachAgent(motion, issues) {
     priorities.push("同じテンポで3球連続フィニッシュを止める");
   }
 
-  const clubTip = {
-    driver: "ドライバーでは、横ブレを抑えるほど打点と打ち出しが安定します。",
-    fairway: "フェアウェイウッドでは、上から打ち込みすぎず体の回転で低く長く抜く意識が合います。",
-    iron: "アイアンでは、最下点をボールの少し先に置くために前傾と左足荷重を保つことが重要です。",
-    wedge: "ウェッジでは、大きな体重移動より胸の向きと距離感の再現性を優先してください。",
-  }[club];
-
   const goalTip = {
     stable: "まずは芯に当たる再現性を優先しましょう。",
     distance: "飛距離を狙う日は、力感よりも切り返しの順番を整える方がヘッドスピードに繋がります。",
@@ -924,7 +916,7 @@ function coachAgent(motion, issues) {
 
   const summary =
     score >= 80 ? "大きな崩れは少なめ" : score >= 65 ? "改善ポイントあり" : "撮影条件と動きを再確認";
-  const advice = `${points.join(" ")} ${clubTip} ${goalTip}`;
+  const advice = `${points.join(" ")} ${goalTip}`;
 
   return {
     score,
