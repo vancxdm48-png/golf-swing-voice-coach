@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-swing-voice-coach-v5";
+const CACHE_NAME = "golf-swing-voice-coach-v6";
 const LOCAL_ASSETS = [
   "./",
   "./index.html",

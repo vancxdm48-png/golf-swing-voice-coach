@@ -369,7 +369,8 @@ function drawGuides(ctx, width, height) {
     ctx.moveTo(centerX - width * 0.15, hipY);
     ctx.lineTo(centerX + width * 0.15, hipY + (viewMode === "face" ? 0 : height * 0.03));
     ctx.stroke();
-    drawLabel(ctx, "肩・腰", centerX + width * 0.19, shoulderY + height * 0.02);
+    drawLabel(ctx, "肩", centerX + width * 0.19, shoulderY + height * 0.02);
+    drawLabel(ctx, "腰", centerX + width * 0.16, hipY + height * 0.035);
   }
 
   ctx.restore();
