@@ -35,7 +35,7 @@ select,
 
 button,
 .file-button {
-  min-height: 44px;
+  min-height: 48px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -240,10 +240,16 @@ h2 {
 
 .transport {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  padding: 14px;
+  padding: 16px 16px 12px;
   background: #f8fbf9;
+}
+
+.transport button {
+  min-height: 60px;
+  font-size: 1rem;
+  font-weight: 800;
 }
 
 .file-button {
@@ -260,12 +266,25 @@ h2 {
   pointer-events: none;
 }
 
-.playback-tools {
+.advanced-controls {
+  background: #f8fbf9;
+  border-top: 1px solid var(--line);
+  padding: 0 16px 16px;
+}
+
+.advanced-controls summary {
+  min-height: 44px;
+  display: grid;
+  align-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.advanced-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  padding: 0 14px 14px;
-  background: #f8fbf9;
 }
 
 .control-panel {
@@ -594,11 +613,12 @@ meter {
   }
 
   .transport,
-  .playback-tools {
+  .advanced-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .transport button:first-child {
+  .transport button:first-child,
+  .transport button:nth-child(4) {
     grid-column: 1 / -1;
   }
 

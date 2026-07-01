@@ -141,7 +141,7 @@ async function startCamera() {
     await cameraFeed.play();
     switchToCamera();
     recordBtn.disabled = false;
-    startCameraBtn.textContent = "カメラ再接続";
+    startCameraBtn.textContent = "1 カメラ再接続";
     setStatus("ready");
     setDiagnosisMode("", "手動ガイドのみ");
     adviceText.textContent =
@@ -246,7 +246,10 @@ function finishRecording() {
   setStatus("playback");
   setDiagnosisMode("", "診断待ち");
   adviceText.textContent =
-    "録画できました。映像を確認してから「診断」を押すと、AIエージェント形式で分析し、音声アドバイスと次回課題を作ります。";
+    "録画できました。これから自動で診断します。";
+  setTimeout(() => {
+    if (!diagnoseBtn.disabled) diagnoseSwing();
+  }, 150);
 }
 
 function handleVideoUpload(event) {
@@ -318,19 +321,19 @@ function drawGuides(ctx, width, height) {
   const ballY = height * 0.83;
 
   ctx.save();
-  ctx.lineWidth = Math.max(2, width * 0.003);
-  ctx.font = `${Math.max(13, width * 0.018)}px system-ui, sans-serif`;
+  ctx.lineWidth = Math.max(4, width * 0.006);
+  ctx.font = `800 ${Math.max(22, Math.min(42, width * 0.028))}px system-ui, sans-serif`;
   ctx.fillStyle = "rgba(255,255,255,0.88)";
 
   if (guides.has("ball")) {
     ctx.strokeStyle = "rgba(255,255,255,0.72)";
-    ctx.setLineDash([8, 9]);
+    ctx.setLineDash([16, 14]);
     ctx.beginPath();
     ctx.moveTo(width * 0.08, ballY);
     ctx.lineTo(width * 0.92, ballY);
     ctx.stroke();
     ctx.setLineDash([]);
-    ctx.fillText("ボール位置の目安", width * 0.08, ballY - height * 0.018);
+    drawLabel(ctx, "ボール", width * 0.08, ballY - height * 0.06);
   }
 
   if (guides.has("head")) {
@@ -341,7 +344,7 @@ function drawGuides(ctx, width, height) {
       width * 0.16,
       height * 0.11,
     );
-    ctx.fillText("頭の許容ゾーン", centerX - width * 0.08, headY - height * 0.07);
+    drawLabel(ctx, "頭ゾーン", centerX - width * 0.08, headY - height * 0.085);
   }
 
   if (guides.has("spine")) {
@@ -355,11 +358,7 @@ function drawGuides(ctx, width, height) {
       ctx.lineTo(centerX + width * 0.04, hipY);
     }
     ctx.stroke();
-    ctx.fillText(
-      viewMode === "face" ? "中心軸" : "前傾ライン",
-      centerX + width * 0.035,
-      hipY - height * 0.04,
-    );
+    drawLabel(ctx, viewMode === "face" ? "中心軸" : "前傾", centerX + width * 0.035, hipY - height * 0.05);
   }
 
   if (guides.has("shoulderHip")) {
@@ -370,9 +369,24 @@ function drawGuides(ctx, width, height) {
     ctx.moveTo(centerX - width * 0.15, hipY);
     ctx.lineTo(centerX + width * 0.15, hipY + (viewMode === "face" ? 0 : height * 0.03));
     ctx.stroke();
-    ctx.fillText("肩・腰ライン", centerX + width * 0.19, shoulderY + height * 0.02);
+    drawLabel(ctx, "肩・腰", centerX + width * 0.19, shoulderY + height * 0.02);
   }
 
+  ctx.restore();
+}
+
+function drawLabel(ctx, text, x, y) {
+  const metrics = ctx.measureText(text);
+  const paddingX = 12;
+  const paddingY = 8;
+  const sizeMatch = ctx.font.match(/(\d+(?:\.\d+)?)px/);
+  const fontSize = sizeMatch ? Number(sizeMatch[1]) : 24;
+  const height = fontSize + paddingY * 2;
+  ctx.save();
+  ctx.fillStyle = "rgba(0, 0, 0, 0.62)";
+  ctx.fillRect(x - paddingX, y - height + paddingY, metrics.width + paddingX * 2, height);
+  ctx.fillStyle = "rgba(255, 255, 255, 0.98)";
+  ctx.fillText(text, x, y);
   ctx.restore();
 }
 

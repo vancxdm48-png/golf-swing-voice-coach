@@ -35,23 +35,26 @@
             </div>
 
             <div class="transport">
-              <button class="primary" id="startCameraBtn" type="button">カメラ開始</button>
-              <button id="recordBtn" type="button" disabled>録画</button>
-              <button id="stopBtn" type="button" disabled>停止</button>
-              <label class="file-button" for="uploadVideo">動画読込</label>
-              <input id="uploadVideo" type="file" accept="video/*" />
-              <button id="diagnoseBtn" type="button" disabled>診断</button>
-              <button id="speakBtn" type="button" disabled>音声再生</button>
-              <button id="stopSpeakBtn" type="button" disabled>音声停止</button>
-              <button id="retakeBtn" type="button" disabled>再撮影</button>
+              <button class="primary" id="startCameraBtn" type="button">1 カメラ開始</button>
+              <button id="recordBtn" type="button" disabled>2 録画開始</button>
+              <button id="stopBtn" type="button" disabled>3 停止して診断</button>
+              <button id="speakBtn" type="button" disabled>音声をもう一度</button>
             </div>
 
-            <div class="playback-tools" aria-label="再生補助">
-              <button id="slowBtn" type="button" disabled>0.5x</button>
-              <button id="normalBtn" type="button" disabled>1x</button>
-              <button id="backFrameBtn" type="button" disabled>1コマ戻る</button>
-              <button id="nextFrameBtn" type="button" disabled>1コマ送る</button>
-            </div>
+            <details class="advanced-controls">
+              <summary>詳細操作</summary>
+              <div class="advanced-grid">
+                <label class="file-button" for="uploadVideo">動画読込</label>
+              <input id="uploadVideo" type="file" accept="video/*" />
+                <button id="diagnoseBtn" type="button" disabled>再診断</button>
+                <button id="stopSpeakBtn" type="button" disabled>音声停止</button>
+                <button id="retakeBtn" type="button" disabled>再撮影</button>
+                <button id="slowBtn" type="button" disabled>0.5x</button>
+                <button id="normalBtn" type="button" disabled>1x</button>
+                <button id="backFrameBtn" type="button" disabled>1コマ戻る</button>
+                <button id="nextFrameBtn" type="button" disabled>1コマ送る</button>
+              </div>
+            </details>
           </section>
 
           <aside class="control-panel" aria-label="診断設定">
