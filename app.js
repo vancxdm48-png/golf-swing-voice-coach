@@ -16,6 +16,7 @@ const nextFrameBtn = document.querySelector("#nextFrameBtn");
 const cameraStatus = document.querySelector("#cameraStatus");
 const diagnosisMode = document.querySelector("#diagnosisMode");
 const countdown = document.querySelector("#countdown");
+const actionHint = document.querySelector("#actionHint");
 const adviceText = document.querySelector("#adviceText");
 const scoreValue = document.querySelector("#scoreValue");
 const scoreNote = document.querySelector("#scoreNote");
@@ -93,6 +94,10 @@ function setDiagnosisMode(mode, text) {
   diagnosisMode.className = `mode-pill ${mode}`;
 }
 
+function setActionHint(text) {
+  actionHint.textContent = text;
+}
+
 function setAgent(key, status, text) {
   const card = agentCards[key];
   card.className = `agent-card ${status}`;
@@ -144,12 +149,14 @@ async function startCamera() {
     startCameraBtn.textContent = "1 カメラ再接続";
     setStatus("ready");
     setDiagnosisMode("", "手動ガイドのみ");
+    setActionHint("次は「2 録画開始」を押して、1スイングしてください");
     adviceText.textContent =
       "カメラを固定して、全身とクラブが入る位置で1スイングを録画してください。";
     startOverlayLoop();
   } catch (error) {
     setStatus("error", "カメラ許可が必要");
     setDiagnosisMode("error", "動画読込に切替可");
+    setActionHint("カメラ許可を確認するか、「詳細操作」から動画を読み込んでください");
     adviceText.textContent =
       "カメラを開始できませんでした。ブラウザのカメラ許可を確認するか、手元のスイング動画を読み込んで診断してください。";
   }
@@ -204,6 +211,7 @@ async function startRecording() {
   stopSpeakBtn.disabled = true;
   setStatus("recording");
   setDiagnosisMode("active", "自動解析準備中");
+  setActionHint("スイング後に「3 停止して診断」を押してください");
   startAnalysisLoop();
 
   const maxDuration = Number(durationSelect.value);
@@ -245,6 +253,7 @@ function finishRecording() {
   retakeBtn.disabled = false;
   setStatus("playback");
   setDiagnosisMode("", "診断待ち");
+  setActionHint("録画できました。自動で診断しています");
   adviceText.textContent =
     "録画できました。これから自動で診断します。";
   setTimeout(() => {
@@ -273,6 +282,7 @@ function handleVideoUpload(event) {
   setStatus("playback", "動画読込済み");
   setDiagnosisMode("", "診断待ち");
   resetAgents();
+  setActionHint("動画を読み込みました。「詳細操作」の再診断で解析できます");
   adviceText.textContent =
     "動画を読み込みました。再生、コマ送り、ガイド線で確認し、診断を押してください。";
 }
@@ -688,6 +698,7 @@ async function diagnoseSwing() {
   diagnoseBtn.disabled = true;
   resetAgents();
   setDiagnosisMode("active", "自動解析中");
+  setActionHint("診断中です。少し待ってください");
   setAgent("capture", "working", "映像と撮影条件を確認中");
   adviceText.textContent = "AIエージェントがスイングを確認しています。";
 
@@ -961,6 +972,7 @@ function renderResult(result) {
   scoreValue.textContent = result.score;
   scoreNote.textContent = `${result.summary} / ${result.comparison}`;
   adviceText.textContent = result.advice;
+  setActionHint("診断完了です。音声でもう一度聞けます");
   practicePlan.innerHTML = result.plan.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   evidenceList.innerHTML = result.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
   qualityGrid.innerHTML = [
@@ -1053,6 +1065,7 @@ function retake() {
   exportReportBtn.disabled = true;
   copyReportBtn.disabled = true;
   setDiagnosisMode("", "再撮影待ち");
+  setActionHint("同じ位置で「2 録画開始」を押してください");
   adviceText.textContent = "同じ位置で再撮影してください。前回と比較しやすくなります。";
 }
 
@@ -1192,6 +1205,7 @@ document.querySelectorAll("input[name='viewMode'], .guide-toggle").forEach((inpu
 if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
   setStatus("error", "録画は非対応");
   setDiagnosisMode("error", "動画読込に切替可");
+  setActionHint("このブラウザでは録画できないため、「詳細操作」から動画を読み込んでください");
   adviceText.textContent =
     "このブラウザではカメラ録画が使えない可能性があります。動画読込からスイング動画を選んで診断してください。";
   startCameraBtn.disabled = true;
@@ -1199,6 +1213,7 @@ if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
 
 setStatus("idle");
 setDiagnosisMode("", "手動ガイドのみ");
+setActionHint("まず「1 カメラ開始」を押してください");
 enablePlaybackTools(false);
 renderHistory();
 startOverlayLoop();

@@ -129,7 +129,7 @@ h2 {
 }
 
 .status-stack {
-  display: grid;
+  display: none;
   gap: 8px;
   justify-items: end;
 }
@@ -247,8 +247,19 @@ h2 {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
-  padding: 16px 16px 12px;
+  padding: 0 16px 12px;
   background: #f8fbf9;
+}
+
+.action-hint {
+  margin: 0;
+  padding: 14px 16px 10px;
+  background: #f8fbf9;
+  color: var(--accent-strong);
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .transport button {
@@ -608,9 +619,7 @@ meter {
   }
 
   .status-stack {
-    width: 100%;
-    grid-template-columns: 1fr 1fr;
-    justify-items: stretch;
+    display: none;
   }
 
   .camera-panel {
