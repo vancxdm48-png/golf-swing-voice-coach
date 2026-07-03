@@ -1,4 +1,4 @@
-const CACHE_NAME = "golf-swing-voice-coach-v10";
+const CACHE_NAME = "golf-swing-voice-coach-v11";
 const LOCAL_ASSETS = [
   "./",
   "./index.html",
@@ -32,7 +32,12 @@ self.addEventListener("fetch", (event) => {
     fetch(event.request)
       .then((response) => {
         const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        caches
+          .open(CACHE_NAME)
+          .then((cache) => cache.put(event.request, copy))
+          .catch(() => {
+            // キャッシュ容量超過や不透明レスポンスの保存失敗は無視する
+          });
         return response;
       })
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./index.html"))),

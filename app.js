@@ -71,6 +71,9 @@ const state = {
   analysisRaf: 0,
   autoStopTimer: 0,
   recordingStartedAt: 0,
+  lastPoseTimestamp: 0,
+  lastLivePoseAt: 0,
+  speechUnlocked: false,
   sessionHistory: loadHistory(),
 };
 
@@ -157,6 +160,7 @@ async function startCamera() {
     adviceText.textContent =
       "カメラを固定して、全身とクラブが入る位置で1スイングを録画してください。";
     startOverlayLoop();
+    ensurePoseEngine();
   } catch (error) {
     setStatus("error", "カメラ許可が必要");
     setDiagnosisMode("error", "動画読込に切替可");
@@ -319,10 +323,32 @@ function startOverlayLoop() {
     drawGuides(ctx, overlayCanvas.width, overlayCanvas.height);
     drawMotionTrace(ctx, overlayCanvas.width, overlayCanvas.height);
     drawPoseOverlay(ctx, overlayCanvas.width, overlayCanvas.height);
+    maybeCaptureLivePose();
     state.overlayRaf = requestAnimationFrame(draw);
   }
 
   draw();
+}
+
+function nextPoseTimestamp() {
+  const ts = Math.max(Math.round(performance.now()), state.lastPoseTimestamp + 1);
+  state.lastPoseTimestamp = ts;
+  return ts;
+}
+
+function maybeCaptureLivePose() {
+  if (!state.poseEngine.ready || !state.poseEngine.landmarker || !state.stream) return;
+  if (!cameraFeed.classList.contains("active") || cameraFeed.readyState < 2) return;
+  const now = performance.now();
+  if (now - state.lastLivePoseAt < 180) return;
+  state.lastLivePoseAt = now;
+  try {
+    const result = state.poseEngine.landmarker.detectForVideo(cameraFeed, nextPoseTimestamp());
+    const landmarks = result.landmarks?.[0];
+    if (landmarks?.length) state.currentPose = landmarks;
+  } catch {
+    // ライブ表示は失敗しても診断に影響しないため無視する
+  }
 }
 
 function drawGuides(ctx, width, height) {
@@ -617,7 +643,7 @@ async function ensurePoseEngine() {
 function capturePoseFrameFromMedia(media, timeSec) {
   if (!state.poseEngine.ready || !state.poseEngine.landmarker) return null;
   try {
-    const result = state.poseEngine.landmarker.detectForVideo(media, Math.round(timeSec * 1000));
+    const result = state.poseEngine.landmarker.detectForVideo(media, nextPoseTimestamp());
     const landmarks = result.landmarks?.[0];
     if (!landmarks?.length) return null;
     const visible = landmarks.filter(isVisiblePoint).length;
@@ -688,21 +714,64 @@ async function analyzePlaybackVideo() {
   const originalTime = playback.currentTime;
   const wasPaused = playback.paused;
   playback.pause();
+
+  const duration = Math.min(Number.isFinite(playback.duration) ? playback.duration : 4, 60);
+
+  // 1段階目: 全体を粗くスキャンしてスイング区間を探す
   state.frames = [];
   state.poseFrames = [];
   state.currentPose = null;
   state.previousFrame = null;
+  const coarseSamples = Math.min(48, Math.max(18, Math.round(duration * 3)));
+  for (let index = 0; index < coarseSamples; index += 1) {
+    await seekVideo(playback, (duration * index) / Math.max(1, coarseSamples - 1));
+    captureMotionFrameFromMedia(playback, ctx, playback.currentTime * 1000);
+  }
 
-  const duration = Math.min(Number.isFinite(playback.duration) ? playback.duration : 4, 8);
-  const samples = 42;
-  for (let index = 0; index < samples; index += 1) {
-    await seekVideo(playback, (duration * index) / Math.max(1, samples - 1));
+  const swingWindow = detectSwingWindow(state.frames, duration);
+
+  // 2段階目: スイング区間だけを密に解析する
+  state.frames = [];
+  state.poseFrames = [];
+  state.previousFrame = null;
+  const denseSamples = 48;
+  const span = Math.max(0.8, swingWindow.end - swingWindow.start);
+  for (let index = 0; index < denseSamples; index += 1) {
+    const targetTime = swingWindow.start + (span * index) / Math.max(1, denseSamples - 1);
+    await seekVideo(playback, targetTime);
     captureMotionFrameFromMedia(playback, ctx, playback.currentTime * 1000);
     if (poseReady) capturePoseFrameFromMedia(playback, playback.currentTime);
   }
 
   playback.currentTime = Math.min(originalTime, playback.duration || originalTime);
   if (!wasPaused) playback.play();
+}
+
+function detectSwingWindow(frames, duration) {
+  const useful = frames.filter((frame) => frame.energy > 3);
+  if (useful.length < 4) {
+    return { start: 0, end: Math.min(duration, 8) };
+  }
+
+  const peak = useful.reduce(
+    (best, frame) => (frame.energy > best.energy ? frame : best),
+    useful[0],
+  );
+  const threshold = Math.max(3, peak.energy * 0.15);
+  let start = peak.t;
+  let end = peak.t;
+  for (const frame of frames) {
+    if (frame.t < start && frame.t >= peak.t - 4 && frame.energy > threshold) start = frame.t;
+    if (frame.t > end && frame.t <= peak.t + 3 && frame.energy > threshold) end = frame.t;
+  }
+
+  start = Math.max(0, start - 0.6);
+  end = Math.min(duration, end + 0.6);
+  if (end - start < 1.2) {
+    start = Math.max(0, peak.t - 1.5);
+    end = Math.min(duration, peak.t + 1.2);
+  }
+  return { start, end };
 }
 
 function waitForVideoReady(video) {
@@ -718,15 +787,25 @@ function seekVideo(video, time) {
 
   video.currentTime = nextTime;
   return new Promise((resolve) => {
-    const fallback = setTimeout(resolve, 350);
-    video.addEventListener(
-      "seeked",
-      () => {
-        clearTimeout(fallback);
-        resolve();
-      },
-      { once: true },
-    );
+    let settled = false;
+    let fallback = 0;
+    let retry = 0;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(fallback);
+      clearTimeout(retry);
+      video.removeEventListener("seeked", finish);
+      resolve();
+    };
+    // 低速端末でシークが完了しない場合に備えて、再指示と長めのタイムアウトを入れる
+    fallback = setTimeout(finish, 1200);
+    retry = setTimeout(() => {
+      if (!settled && Math.abs(video.currentTime - nextTime) > 0.08) {
+        video.currentTime = nextTime;
+      }
+    }, 500);
+    video.addEventListener("seeked", finish, { once: true });
   });
 }
 
@@ -762,6 +841,7 @@ async function diagnoseSwing() {
 function calculateMetrics() {
   const usefulFrames = state.frames.filter((frame) => frame.energy > 4);
   const poseMetrics = calculatePoseMetrics();
+  const tempo = computeTempo(usefulFrames, state.poseFrames);
   if (usefulFrames.length < 8) {
     return {
       hasMotion: poseMetrics.hasPose,
@@ -770,6 +850,7 @@ function calculateMetrics() {
       energyPeakAt: 0.55,
       energyBurst: 40,
       frameCount: usefulFrames.length,
+      tempo,
       ...poseMetrics,
     };
   }
@@ -788,7 +869,86 @@ function calculateMetrics() {
     energyPeakAt: Math.min(1, Math.max(0, peakAt)),
     energyBurst: Math.max(...energies),
     frameCount: usefulFrames.length,
+    tempo,
     ...poseMetrics,
+  };
+}
+
+function computeTempo(frames, poseFrames) {
+  // 姿勢推定が使えるときは手首の速度、使えないときは動きエネルギーからテンポを推定する
+  let series = frames.map((frame) => ({ t: frame.t, v: frame.energy }));
+
+  const usablePose = (poseFrames || []).filter((frame) => frame.confidence >= 45);
+  if (usablePose.length >= 10) {
+    const wristSeries = [];
+    for (let i = 1; i < usablePose.length; i += 1) {
+      const prev = usablePose[i - 1];
+      const curr = usablePose[i];
+      const wristPrev = isVisiblePoint(prev.landmarks[16]) ? prev.landmarks[16] : prev.landmarks[15];
+      const wristCurr = isVisiblePoint(curr.landmarks[16]) ? curr.landmarks[16] : curr.landmarks[15];
+      const dt = curr.t - prev.t;
+      if (!wristPrev || !wristCurr || dt <= 0) continue;
+      const speed = Math.hypot(wristCurr.x - wristPrev.x, wristCurr.y - wristPrev.y) / dt;
+      wristSeries.push({ t: curr.t, v: speed });
+    }
+    if (wristSeries.length >= 8) series = wristSeries;
+  }
+
+  if (series.length < 8) return null;
+
+  const peakValue = Math.max(...series.map((point) => point.v));
+  if (!Number.isFinite(peakValue) || peakValue <= 0) return null;
+  const impactIndex = series.findIndex((point) => point.v === peakValue);
+  if (impactIndex < 3) return null;
+
+  // 始動: インパクトから遡って動きがほぼ止まっている点
+  const startThreshold = peakValue * 0.12;
+  let startIndex = 0;
+  for (let i = impactIndex; i >= 0; i -= 1) {
+    if (series[i].v < startThreshold) {
+      startIndex = i;
+      break;
+    }
+  }
+
+  // 切り返し(トップ): 始動〜インパクトの間で最も動きが小さい点
+  let topIndex = startIndex;
+  let minValue = Infinity;
+  for (let i = startIndex + 1; i < impactIndex; i += 1) {
+    if (series[i].v < minValue) {
+      minValue = series[i].v;
+      topIndex = i;
+    }
+  }
+
+  const backswing = series[topIndex].t - series[startIndex].t;
+  const downswing = series[impactIndex].t - series[topIndex].t;
+  if (backswing <= 0.15 || downswing <= 0.05) return null;
+  const ratio = backswing / downswing;
+  if (!Number.isFinite(ratio) || ratio <= 0 || ratio > 12) return null;
+
+  let label = "良";
+  let score = 92;
+  if (ratio < 2.0) {
+    label = "速い";
+    score = 52;
+  } else if (ratio < 2.6) {
+    label = "やや速い";
+    score = 72;
+  } else if (ratio <= 3.4) {
+    label = "良";
+    score = 92;
+  } else {
+    label = "ゆったり";
+    score = 80;
+  }
+
+  return {
+    ratio: Math.round(ratio * 10) / 10,
+    backswing: Math.round(backswing * 100) / 100,
+    downswing: Math.round(downswing * 100) / 100,
+    label,
+    score,
   };
 }
 
@@ -857,12 +1017,20 @@ function motionAgent(metrics) {
   const lateralSource = metrics.hasPose && metrics.headRange != null ? metrics.headRange : metrics.lateralRange;
   const verticalPenalty = clamp(Math.round(metrics.verticalRange * 120), 0, 22);
   const lateralPenalty = clamp(Math.round(lateralSource * (metrics.hasPose ? 260 : 190)), 0, 34);
-  const tempoPenalty = Math.abs(metrics.energyPeakAt - 0.58) > 0.22 ? 14 : 4;
+  const tempoPenalty = metrics.tempo
+    ? metrics.tempo.ratio >= 2.6 && metrics.tempo.ratio <= 3.4
+      ? 4
+      : metrics.tempo.ratio >= 2.0 && metrics.tempo.ratio <= 4.2
+        ? 10
+        : 14
+    : Math.abs(metrics.energyPeakAt - 0.58) > 0.22
+      ? 14
+      : 4;
   const posturePenalty =
     metrics.hasPose && metrics.spineChange != null ? clamp(Math.round(metrics.spineChange / 4), 0, 14) : 0;
   const stability = clamp(100 - lateralPenalty - verticalPenalty, 0, 100);
   const swayScore = clamp(Math.round(lateralSource * (metrics.hasPose ? 360 : 240)), 0, 100);
-  const tempoScore = clamp(100 - tempoPenalty * 4, 0, 100);
+  const tempoScore = metrics.tempo ? metrics.tempo.score : clamp(100 - tempoPenalty * 4, 0, 100);
   const confidence = clamp(metrics.confidence || (metrics.hasMotion ? 58 : 35), 0, 100);
 
   return {
@@ -874,7 +1042,14 @@ function motionAgent(metrics) {
     swayScore,
     swayCmLike: swayScore < 32 ? "小" : swayScore < 66 ? "中" : "大",
     tempoScore,
-    tempoLabel: tempoScore > 80 ? "良" : tempoScore > 58 ? "やや速い" : "速い",
+    tempoLabel: metrics.tempo
+      ? metrics.tempo.label
+      : tempoScore > 80
+        ? "良"
+        : tempoScore > 58
+          ? "やや速い"
+          : "速い",
+    tempo: metrics.tempo,
     hasMotion: metrics.hasMotion,
     hasPose: metrics.hasPose,
     confidence,
@@ -917,6 +1092,12 @@ function coachAgent(motion, issues) {
     `左右ブレ判定: ${motion.swayCmLike}`,
     `テンポ判定: ${motion.tempoLabel}`,
   ];
+
+  if (motion.tempo) {
+    evidence.push(
+      `テンポ比(バックスイング:ダウンスイング): ${motion.tempo.ratio}:1（理想は約3:1）`,
+    );
+  }
 
   if (!motion.hasMotion && !motion.hasPose) {
     points.push("自動検出が少ないため、今回は手動ガイド中心の参考診断です。次回は全身とクラブが大きく映る距離で撮影してください。");
@@ -1058,7 +1239,7 @@ function saveSession(result) {
       minute: "2-digit",
     }),
   };
-  state.sessionHistory = [entry, ...state.sessionHistory].slice(0, 5);
+  state.sessionHistory = [entry, ...state.sessionHistory].slice(0, 50);
   safeSetStorage("golfSwingVoiceCoachHistory", JSON.stringify(state.sessionHistory));
   renderHistory();
 }
@@ -1077,14 +1258,18 @@ function renderHistory() {
     return;
   }
 
-  historyList.innerHTML = state.sessionHistory
-    .map(
-      (item) =>
-        `<div class="history-item">${escapeHtml(item.date)} / ${item.score}点 / 左右ブレ:${escapeHtml(
-          item.sway,
-        )} / テンポ:${escapeHtml(item.tempo)} / ${escapeHtml(item.method || "簡易解析")}</div>`,
-    )
-    .join("");
+  const visible = state.sessionHistory.slice(0, 10);
+  const rest = state.sessionHistory.length - visible.length;
+  historyList.innerHTML =
+    visible
+      .map(
+        (item) =>
+          `<div class="history-item">${escapeHtml(item.date)} / ${item.score}点 / 左右ブレ:${escapeHtml(
+            item.sway,
+          )} / テンポ:${escapeHtml(item.tempo)} / ${escapeHtml(item.method || "簡易解析")}</div>`,
+      )
+      .join("") +
+    (rest > 0 ? `<div class="history-item">ほか${rest}件を保存中（最大50件）</div>` : "");
 }
 
 function clearHistory() {
@@ -1181,6 +1366,20 @@ function stopSpeaking() {
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 }
 
+function unlockSpeech() {
+  // iOS Safariは音声合成をユーザー操作起点でしか開始できないため、
+  // 最初のタップ時に無音の発話を実行して以後の自動読み上げを有効にする
+  if (state.speechUnlocked || !("speechSynthesis" in window)) return;
+  try {
+    const utterance = new SpeechSynthesisUtterance(" ");
+    utterance.volume = 0;
+    window.speechSynthesis.speak(utterance);
+    state.speechUnlocked = true;
+  } catch {
+    // 失敗しても手動の読み上げボタンは使えるため無視する
+  }
+}
+
 function handleVisibility() {
   if (document.hidden) stopSpeaking();
 }
@@ -1221,6 +1420,14 @@ cameraSelect.addEventListener("change", () => {
   if (state.stream) startCamera();
 });
 document.addEventListener("visibilitychange", handleVisibility);
+document.addEventListener("pointerdown", unlockSpeech, { once: true });
+if ("speechSynthesis" in window) {
+  // 一部ブラウザでは初回のgetVoices()が空配列を返すため、事前に読み込みを促す
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.addEventListener?.("voiceschanged", () => {
+    window.speechSynthesis.getVoices();
+  });
+}
 window.addEventListener("resize", startOverlayLoop);
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
