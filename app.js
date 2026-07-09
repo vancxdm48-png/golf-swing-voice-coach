@@ -60,6 +60,8 @@ const state = {
     loading: false,
     failed: false,
     landmarker: null,
+    model: null,
+    delegate: null,
   },
   recording: false,
   recordedUrl: "",
@@ -609,6 +611,13 @@ function extractMotionFrame(imageData, timeSec) {
   };
 }
 
+const POSE_MODEL_URLS = {
+  full:
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task",
+  lite:
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
+};
+
 async function ensurePoseEngine() {
   if (state.poseEngine.ready || state.poseEngine.loading) return state.poseEngine.ready;
   state.poseEngine.loading = true;
@@ -619,17 +628,43 @@ async function ensurePoseEngine() {
     const filesetResolver = await vision.FilesetResolver.forVisionTasks(
       "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm",
     );
-    state.poseEngine.landmarker = await vision.PoseLandmarker.createFromOptions(filesetResolver, {
-      baseOptions: {
-        modelAssetPath:
-          "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task",
-        delegate: "GPU",
-      },
-      runningMode: "VIDEO",
-      numPoses: 1,
-    });
-    state.poseEngine.ready = true;
-    state.poseEngine.failed = false;
+
+    // 精度優先で full を試し、端末が非対応/GPU不可なら lite に、
+    // さらに GPU 失敗時は CPU にフォールバックして「使えない」を極力減らす。
+    const attempts = [
+      { model: "full", delegate: "GPU" },
+      { model: "full", delegate: "CPU" },
+      { model: "lite", delegate: "GPU" },
+      { model: "lite", delegate: "CPU" },
+    ];
+
+    let lastError = null;
+    for (const attempt of attempts) {
+      try {
+        state.poseEngine.landmarker = await vision.PoseLandmarker.createFromOptions(filesetResolver, {
+          baseOptions: {
+            modelAssetPath: POSE_MODEL_URLS[attempt.model],
+            delegate: attempt.delegate,
+          },
+          runningMode: "VIDEO",
+          numPoses: 1,
+          // 検出/追跡の信頼度しきい値を明示し、低信頼の誤検出を弾いて精度を上げる
+          minPoseDetectionConfidence: 0.5,
+          minPosePresenceConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
+        state.poseEngine.model = attempt.model;
+        state.poseEngine.delegate = attempt.delegate;
+        state.poseEngine.ready = true;
+        state.poseEngine.failed = false;
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!state.poseEngine.ready) throw lastError || new Error("pose engine init failed");
   } catch (error) {
     state.poseEngine.failed = true;
     state.poseEngine.ready = false;
@@ -646,11 +681,20 @@ function capturePoseFrameFromMedia(media, timeSec) {
     const result = state.poseEngine.landmarker.detectForVideo(media, nextPoseTimestamp());
     const landmarks = result.landmarks?.[0];
     if (!landmarks?.length) return null;
-    const visible = landmarks.filter(isVisiblePoint).length;
+    // スイング診断に使う主要関節(肩・腰・膝・足首・手首・鼻)の可視度の平均を
+    // 信頼度とする。全身の単純カウントより、解析に効く点の質を反映できる。
+    const keyIndices = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+    const visibilities = keyIndices
+      .map((i) => landmarks[i])
+      .filter(Boolean)
+      .map((p) => (typeof p.visibility === "number" ? p.visibility : 1));
+    const avgVisibility = visibilities.length
+      ? visibilities.reduce((sum, v) => sum + v, 0) / visibilities.length
+      : 0;
     const poseFrame = {
       t: timeSec,
       landmarks,
-      confidence: Math.round((visible / landmarks.length) * 100),
+      confidence: Math.round(clamp(avgVisibility, 0, 1) * 100),
       angles: calculatePoseAngles(landmarks),
     };
     state.currentPose = landmarks;
@@ -677,6 +721,19 @@ function calculatePoseAngles(landmarks) {
     hipTilt,
     spineLean,
   };
+}
+
+// 両手首が見えていれば中点、片方だけなら見えている方を使う。
+// フレームごとに左右を切り替えると速度が跳ねるため、可能な限り安定した1点を返す。
+function bestWristPoint(landmarks) {
+  const left = landmarks[15];
+  const right = landmarks[16];
+  const leftOk = isVisiblePoint(left);
+  const rightOk = isVisiblePoint(right);
+  if (leftOk && rightOk) return midpoint(left, right);
+  if (leftOk) return left;
+  if (rightOk) return right;
+  return null;
 }
 
 function midpoint(a, b) {
@@ -730,12 +787,14 @@ async function analyzePlaybackVideo() {
 
   const swingWindow = detectSwingWindow(state.frames, duration);
 
-  // 2段階目: スイング区間だけを密に解析する
+  // 2段階目: スイング区間だけを密に解析する。
+  // ダウンスイングは 0.25 秒前後で終わるため、サンプルが粗いとインパクトや
+  // テンポを取りこぼす。区間長に応じて約60fps相当まで密度を上げる(上限あり)。
   state.frames = [];
   state.poseFrames = [];
   state.previousFrame = null;
-  const denseSamples = 48;
   const span = Math.max(0.8, swingWindow.end - swingWindow.start);
+  const denseSamples = clamp(Math.round(span * 60), 48, 130);
   for (let index = 0; index < denseSamples; index += 1) {
     const targetTime = swingWindow.start + (span * index) / Math.max(1, denseSamples - 1);
     await seekVideo(playback, targetTime);
@@ -783,7 +842,7 @@ function waitForVideoReady(video) {
 
 function seekVideo(video, time) {
   const nextTime = clamp(time, 0, Number.isFinite(video.duration) ? video.duration : time);
-  if (Math.abs(video.currentTime - nextTime) < 0.005) return Promise.resolve();
+  if (Math.abs(video.currentTime - nextTime) < 0.002) return Promise.resolve();
 
   video.currentTime = nextTime;
   return new Promise((resolve) => {
@@ -795,9 +854,24 @@ function seekVideo(video, time) {
       settled = true;
       clearTimeout(fallback);
       clearTimeout(retry);
-      video.removeEventListener("seeked", finish);
-      resolve();
+      video.removeEventListener("seeked", onSeeked);
+      // seeked が発火しても、実フレームがまだ描画されていないことがある。
+      // requestVideoFrameCallback があれば「新しいフレームが提示された」ことを待って
+      // からキャプチャすることで、シーク直後のズレたフレームを解析する事故を防ぐ。
+      if (typeof video.requestVideoFrameCallback === "function") {
+        let frameSettled = false;
+        const done = () => {
+          if (frameSettled) return;
+          frameSettled = true;
+          resolve();
+        };
+        video.requestVideoFrameCallback(() => done());
+        setTimeout(done, 120);
+      } else {
+        resolve();
+      }
     };
+    const onSeeked = () => finish();
     // 低速端末でシークが完了しない場合に備えて、再指示と長めのタイムアウトを入れる
     fallback = setTimeout(finish, 1200);
     retry = setTimeout(() => {
@@ -805,7 +879,7 @@ function seekVideo(video, time) {
         video.currentTime = nextTime;
       }
     }, 500);
-    video.addEventListener("seeked", finish, { once: true });
+    video.addEventListener("seeked", onSeeked, { once: true });
   });
 }
 
@@ -884,8 +958,8 @@ function computeTempo(frames, poseFrames) {
     for (let i = 1; i < usablePose.length; i += 1) {
       const prev = usablePose[i - 1];
       const curr = usablePose[i];
-      const wristPrev = isVisiblePoint(prev.landmarks[16]) ? prev.landmarks[16] : prev.landmarks[15];
-      const wristCurr = isVisiblePoint(curr.landmarks[16]) ? curr.landmarks[16] : curr.landmarks[15];
+      const wristPrev = bestWristPoint(prev.landmarks);
+      const wristCurr = bestWristPoint(curr.landmarks);
       const dt = curr.t - prev.t;
       if (!wristPrev || !wristCurr || dt <= 0) continue;
       const speed = Math.hypot(wristCurr.x - wristPrev.x, wristCurr.y - wristPrev.y) / dt;
@@ -895,6 +969,11 @@ function computeTempo(frames, poseFrames) {
   }
 
   if (series.length < 8) return null;
+
+  // 速度系列を平滑化してから始動・トップ・インパクトを検出する。
+  // 生の速度はノイズで偽ピーク/偽の谷が出やすく、テンポ比が暴れる。
+  const smoothedV = movingAverage(series.map((point) => point.v), 3);
+  series = series.map((point, index) => ({ t: point.t, v: smoothedV[index] }));
 
   const peakValue = Math.max(...series.map((point) => point.v));
   if (!Number.isFinite(peakValue) || peakValue <= 0) return null;
@@ -962,14 +1041,37 @@ function calculatePoseMetrics() {
       hipRange: null,
       spineChange: null,
       kneeMin: null,
-      analysisMethod: state.poseEngine.failed ? "簡易解析" : "簡易解析",
+      bodyScale: null,
+      analysisMethod: "簡易解析",
     };
   }
 
-  const noses = frames.map((frame) => frame.landmarks[0]).filter(isVisiblePoint);
-  const hips = frames.map((frame) => midpoint(frame.landmarks[23], frame.landmarks[24]));
-  const spineAngles = frames.map((frame) => frame.angles.spineLean);
-  const kneeAngles = frames.flatMap((frame) => [frame.angles.leftKnee, frame.angles.rightKnee]).filter(Boolean);
+  // 体格スケール = 肩幅(なければ胴長)の中央値。左右ブレをこのスケールで割ることで、
+  // カメラとの距離や被写体の大きさに依存しない「肩幅の何倍動いたか」に正規化する。
+  const shoulderWidths = frames.map((frame) => {
+    const left = frame.landmarks[11];
+    const right = frame.landmarks[12];
+    return left && right ? Math.hypot(left.x - right.x, left.y - right.y) : null;
+  });
+  const torsoLengths = frames.map((frame) => {
+    const shoulderMid = midpoint(frame.landmarks[11], frame.landmarks[12]);
+    const hipMid = midpoint(frame.landmarks[23], frame.landmarks[24]);
+    return Math.hypot(shoulderMid.x - hipMid.x, shoulderMid.y - hipMid.y);
+  });
+  const bodyScale = median(shoulderWidths) || median(torsoLengths) || 0.2;
+
+  // 各系列を移動平均で平滑化してから頑健範囲を取る。
+  const noseXs = movingAverage(frames.map((frame) => frame.landmarks[0]?.x), 3);
+  const hipXs = movingAverage(
+    frames.map((frame) => midpoint(frame.landmarks[23], frame.landmarks[24]).x),
+    3,
+  );
+  const spineAngles = movingAverage(frames.map((frame) => frame.angles.spineLean), 3);
+  const kneeSeries = movingAverage(
+    frames.map((frame) => Math.min(frame.angles.leftKnee || 180, frame.angles.rightKnee || 180)),
+    3,
+  );
+
   const confidence = Math.round(
     frames.reduce((total, frame) => total + frame.confidence, 0) / frames.length,
   );
@@ -977,11 +1079,14 @@ function calculatePoseMetrics() {
   return {
     hasPose: true,
     confidence,
-    headRange: rangeOf(noses, "x"),
-    hipRange: rangeOf(hips, "x"),
-    spineChange: rangeOf(spineAngles),
-    kneeMin: Math.min(...kneeAngles),
-    analysisMethod: "AI姿勢推定",
+    // 肩幅で正規化した値(単位: 肩幅の倍数)
+    headRange: safeDivide(trimmedRange(noseXs), bodyScale),
+    hipRange: safeDivide(trimmedRange(hipXs), bodyScale),
+    spineChange: trimmedRange(spineAngles),
+    // 単一フレームの誤検出を避けるため、最小ではなく下位5%点を採用
+    kneeMin: percentile(kneeSeries, 0.05),
+    bodyScale,
+    analysisMethod: `AI姿勢推定${state.poseEngine.model ? `(${state.poseEngine.model})` : ""}`,
   };
 }
 
@@ -991,6 +1096,53 @@ function rangeOf(values, key) {
     .filter((value) => Number.isFinite(value));
   if (!nums.length) return null;
   return Math.max(...nums) - Math.min(...nums);
+}
+
+function median(values) {
+  const nums = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!nums.length) return null;
+  const mid = Math.floor(nums.length / 2);
+  return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+}
+
+// 中心移動平均。姿勢推定の1フレームだけのブレを平滑化し、範囲や角度の暴れを抑える。
+function movingAverage(values, window = 3) {
+  if (window <= 1 || values.length < window) return values.slice();
+  const half = Math.floor(window / 2);
+  return values.map((_, index) => {
+    let sum = 0;
+    let count = 0;
+    for (let j = index - half; j <= index + half; j += 1) {
+      if (j >= 0 && j < values.length && Number.isFinite(values[j])) {
+        sum += values[j];
+        count += 1;
+      }
+    }
+    return count ? sum / count : values[index];
+  });
+}
+
+function percentile(values, p) {
+  const nums = values.filter((value) => Number.isFinite(value)).sort((a, b) => a - b);
+  if (!nums.length) return null;
+  const idx = clamp(p, 0, 1) * (nums.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return nums[lo];
+  return nums[lo] + (nums[hi] - nums[lo]) * (idx - lo);
+}
+
+// 単純な最大-最小は外れ値1点で暴れるため、上下端を切り落とした頑健な範囲を使う。
+function trimmedRange(values, lowP = 0.1, highP = 0.9) {
+  const low = percentile(values, lowP);
+  const high = percentile(values, highP);
+  if (low == null || high == null) return null;
+  return Math.max(0, high - low);
+}
+
+function safeDivide(numerator, denominator) {
+  if (numerator == null || !Number.isFinite(denominator) || denominator <= 0) return null;
+  return numerator / denominator;
 }
 
 function runAgentPipeline(metrics, issues) {
@@ -1014,9 +1166,14 @@ function runAgentPipeline(metrics, issues) {
 }
 
 function motionAgent(metrics) {
-  const lateralSource = metrics.hasPose && metrics.headRange != null ? metrics.headRange : metrics.lateralRange;
+  const usePose = metrics.hasPose && metrics.headRange != null;
+  // 姿勢推定時: headRange は「肩幅の倍数」(0.1〜0.6程度)。
+  // 簡易解析時: lateralRange は画像内の正規化レンジ。単位が異なるため係数を分ける。
+  const lateralSource = usePose ? metrics.headRange : metrics.lateralRange;
+  const swayMult = usePose ? 150 : 240;
+  const lateralPenaltyMult = usePose ? 60 : 190;
   const verticalPenalty = clamp(Math.round(metrics.verticalRange * 120), 0, 22);
-  const lateralPenalty = clamp(Math.round(lateralSource * (metrics.hasPose ? 260 : 190)), 0, 34);
+  const lateralPenalty = clamp(Math.round(lateralSource * lateralPenaltyMult), 0, 34);
   const tempoPenalty = metrics.tempo
     ? metrics.tempo.ratio >= 2.6 && metrics.tempo.ratio <= 3.4
       ? 4
@@ -1029,7 +1186,7 @@ function motionAgent(metrics) {
   const posturePenalty =
     metrics.hasPose && metrics.spineChange != null ? clamp(Math.round(metrics.spineChange / 4), 0, 14) : 0;
   const stability = clamp(100 - lateralPenalty - verticalPenalty, 0, 100);
-  const swayScore = clamp(Math.round(lateralSource * (metrics.hasPose ? 360 : 240)), 0, 100);
+  const swayScore = clamp(Math.round(lateralSource * swayMult), 0, 100);
   const tempoScore = metrics.tempo ? metrics.tempo.score : clamp(100 - tempoPenalty * 4, 0, 100);
   const confidence = clamp(metrics.confidence || (metrics.hasMotion ? 58 : 35), 0, 100);
 
